@@ -305,14 +305,12 @@ export async function playSong(song, options = {}, state, dom, callbacks = {}, d
 
         // 2. 未命中或重试时，发起实际网络请求
         if (!originalAudioUrl) {
-            let audioUrl = API.getSongUrl(song, quality);
             if (isRetry) {
-                audioUrl += '&nocache=true';
                 log(`[音频重试] 正在通过非缓存链路重试请求...`);
             }
-            log(`[音频解析] 请求接口: ${audioUrl}`);
+            log(`[音频解析] 请求接口: source=${song.source || 'netease'}, quality=${quality}`);
 
-            const audioData = await API.fetchJson(audioUrl);
+            const audioData = await API.fetchSongUrl(song, quality, { nocache: isRetry }, log);
             if (myToken !== currentPlaybackToken) {
                 return;
             }
@@ -593,8 +591,7 @@ export async function downloadSong(song, quality = "320", dom = null) {
     try {
         showNotification("正在准备下载...", "info", dom);
 
-        const audioUrl = API.getSongUrl(song, quality);
-        const audioData = await API.fetchJson(audioUrl);
+        const audioData = await API.fetchSongUrl(song, quality, {}, null);
 
         if (audioData && audioData.url) {
             const proxiedAudioUrl = buildAudioProxyUrl(audioData.url);

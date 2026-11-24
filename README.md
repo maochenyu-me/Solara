@@ -59,7 +59,7 @@
 ```yaml
 services:
   solara:
-    image: ghcr.io/akudamatata/solara:latest
+    image: ghcr.io/maochenyu-me/solara:latest
     container_name: solara
     restart: always
     init: true # 解决容器停止时 Node/Wrangler 进程无法优雅响应 SIGTERM 导致卡顿的问题
@@ -96,6 +96,23 @@ docker compose up -d
 ## ⚙️ 配置提示
 - API 基地址定义在 `functions/proxy.ts` 中，可替换为自建接口域名。
 - 默认主题、播放模式等偏好可在 `js/state.js` 初始化逻辑中按需调整。
+
+### 🔀 切换音乐数据源（GD 音乐台 / 自部署网易云 API）
+设置面板（桌面端双击左上角标题、移动端双击顶部标题栏，或 `Ctrl/Cmd + ,`）新增了 **「音乐数据源」** 区块，可在两种后端之间切换，切换后立即生效：
+
+- **GD 音乐台（默认）**：公共免费聚合接口，无需登录，网易云/酷我/JOOX/哔哩哔哩多个音源都可用。地址由容器环境变量 `API_BASE_URL` 决定。
+- **自部署网易云 API**：浏览器**直连**你自己的 NCM 实例（例如基于 [api-enhanced](https://github.com/maochenyu-me/api-enhanced) 搭建的 `https://ncm.518339.xyz`），接口地址可在设置里填写。此模式下音源下拉会锁定为「网易云」，登录会员账号后可播放 VIP 曲目；历史列表里酷我/JOOX/哔哩哔哩的歌会自动回退到 GD 音乐台取地址。
+
+> [!IMPORTANT]
+> 因为是浏览器直连，必须把**本站的访问域名（Origin）**加入 NCM 实例的 `CORS_ALLOW_ORIGIN` 白名单，否则请求会被浏览器拦下。该变量接收逗号分隔的完整 Origin，例如：
+> ```bash
+> CORS_ALLOW_ORIGIN=https://solara.example.com,http://localhost:8787
+> ```
+> 本地开发时用 `http://localhost:8787` 与 `http://127.0.0.1:8787`；两个地址是不同 Origin，需要分别列出。
+
+登录方式有两种，凭据只保存在本机浏览器（localStorage），**不会**同步到 Cloudflare D1：
+1. 点「扫码登录网易云」，用网易云音乐 App 扫码并在手机上确认。
+2. 或手动把 `MUSIC_U=...` 粘贴到「手动粘贴 Cookie」输入框。
 
 ### ☁️ Cloudflare D1 绑定与建表
 1. 在 Cloudflare Dashboard 的 **Workers & Pages → D1 → Create** 中新建数据库，建议命名为 `solara-db`（名称可自定）。
@@ -199,6 +216,8 @@ Music-Player/
 │   ├── core/                  # 核心基础设施层
 │   │   ├── audio.js           # 播放器底层状态机、防抖与请求熔断器
 │   │   ├── quality.js         # 音质码率协商与流地址解析
+│   │   ├── provider.js        # 音乐数据源选择（GD 音乐台 / 自部署 NCM）
+│   │   ├── ncm-api.js         # 自部署网易云 API 客户端（搜索/榜单/取址/歌词/扫码）
 │   │   ├── storage.js         # 本地持久化与 Cloudflare D1 漫游驱动
 │   │   └── media-session.js   # 全平台锁屏控制器与元数据同步
 │   ├── features/              # 业务特性层

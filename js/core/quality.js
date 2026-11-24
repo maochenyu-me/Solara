@@ -3,6 +3,7 @@
  */
 
 import { QUALITY_OPTIONS, SOURCE_OPTIONS, normalizeQuality, normalizeSource } from "../constants.js";
+import { isNcmActive } from "./provider.js";
 import { safeSetLocalStorage } from "./storage.js";
 
 let qualityMenuAnchor = null;
@@ -51,10 +52,24 @@ export function updateQualityLabel(state, dom) {
 }
 
 export function updateSourceLabel(state, dom) {
-    const option = SOURCE_OPTIONS.find(item => item.value === state.searchSource) || SOURCE_OPTIONS[0];
-    if (dom.sourceSelectLabel) {
-        dom.sourceSelectLabel.textContent = option.label;
+    if (!dom.sourceSelectLabel) return;
+
+    // 自部署 NCM API 只服务网易云曲库，此时音源固定为网易云
+    if (isNcmActive()) {
+        const netease = SOURCE_OPTIONS.find(item => item.value === "netease") || SOURCE_OPTIONS[0];
+        dom.sourceSelectLabel.textContent = netease.label;
+        if (dom.sourceSelectWrapper) dom.sourceSelectWrapper.classList.add("is-locked");
+        if (dom.sourceSelectButton) {
+            dom.sourceSelectButton.setAttribute("aria-disabled", "true");
+        }
+        return;
     }
+
+    if (dom.sourceSelectWrapper) dom.sourceSelectWrapper.classList.remove("is-locked");
+    if (dom.sourceSelectButton) dom.sourceSelectButton.removeAttribute("aria-disabled");
+
+    const option = SOURCE_OPTIONS.find(item => item.value === state.searchSource) || SOURCE_OPTIONS[0];
+    dom.sourceSelectLabel.textContent = option.label;
 }
 
 export function buildQualityMenu(state, dom) {
@@ -76,6 +91,18 @@ export function buildQualityMenu(state, dom) {
 
 export function buildSourceMenu(state, dom) {
     if (!dom.sourceMenu) return;
+
+    // NCM 模式下音源收敛为网易云，菜单项一律禁用
+    if (isNcmActive()) {
+        const netease = SOURCE_OPTIONS.find(item => item.value === "netease") || SOURCE_OPTIONS[0];
+        dom.sourceMenu.innerHTML = `
+            <button type="button" class="source-option source-menu-item active" data-source="netease" role="option" aria-selected="true" disabled>
+                ${netease.label}
+            </button>
+        `;
+        return;
+    }
+
     const optionsHtml = SOURCE_OPTIONS.map(option => {
         const isActive = option.value === state.searchSource;
         return `
@@ -324,6 +351,8 @@ export function resetSourceMenuPosition(dom) {
 
 export function openSourceMenu(state, dom, isMobileView = false) {
     if (!dom.sourceMenu || !dom.sourceSelectButton) return;
+    // NCM 模式下音源固定为网易云，不提供下拉切换
+    if (isNcmActive()) return;
     state.sourceMenuOpen = true;
     ensureFloatingMenuListeners(state, dom, isMobileView);
     buildSourceMenu(state, dom);

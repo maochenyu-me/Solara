@@ -206,10 +206,7 @@ export async function loadLyrics(song, state, dom, debugLogger = null) {
     }
 
     try {
-        const lyricUrl = API.getLyric(song);
-        log(`[歌词请求] 解析接口: ${lyricUrl}`);
-
-        const lyricData = await API.fetchJson(lyricUrl);
+        const lyricData = await API.fetchLyricData(song, log);
 
         if (lyricData && lyricData.lyric) {
             lyricsMemoryCache.set(cacheKey, lyricData.lyric);

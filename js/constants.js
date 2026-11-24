@@ -2,6 +2,17 @@
  * Solara 全局常量与配置
  */
 
+import {
+    isNcmActive,
+} from "./core/provider.js";
+import {
+    ncmSearch,
+    ncmRadarPlaylist,
+    ncmSongUrl,
+    ncmLyric,
+    ncmPic,
+} from "./core/ncm-api.js";
+
 export const DEFAULT_RADAR_GENRES = [
     "热歌榜",
     "新歌榜",
@@ -71,6 +82,8 @@ export const STORAGE_KEYS_TO_SYNC = new Set([
     "searchSource",
     "lastSearchState.v1",
     "radarSettings",
+    "musicApiProvider",
+    "ncmBaseUrl",
 ]);
 
 export const PALETTE_STORAGE_KEY = "paletteCache.v3";
@@ -145,6 +158,18 @@ export const API = {
     },
 
     search: async (keyword, source = "netease", count = 20, page = 1, debugLogger = null) => {
+        if (isNcmActive()) {
+            try {
+                if (typeof debugLogger === "function") debugLogger(`API请求(NCM): 关键词=${keyword}, 页码=${page}`);
+                const results = await ncmSearch(keyword, count, page, debugLogger);
+                if (typeof debugLogger === "function") debugLogger(`API响应(NCM): 共 ${results.length} 条`);
+                return results;
+            } catch (error) {
+                if (typeof debugLogger === "function") debugLogger(`API错误(NCM): ${error.message}`);
+                throw error;
+            }
+        }
+
         const signature = API.generateSignature();
         const url = `${API.baseUrl}?types=search&source=${source}&name=${encodeURIComponent(keyword)}&count=${count}&pages=${page}&s=${signature}`;
 
@@ -192,6 +217,10 @@ export const API = {
 
         limit = Math.max(1, Math.min(200, Math.trunc(limit)) || 20);
         offset = Math.max(0, Math.trunc(offset) || 0);
+
+        if (isNcmActive()) {
+            return ncmRadarPlaylist(playlistId, limit, null);
+        }
 
         const params = new URLSearchParams({
             types: "playlist",
@@ -243,6 +272,48 @@ export const API = {
     getPicUrl: (song) => {
         const signature = API.generateSignature();
         return `${API.baseUrl}?types=pic&id=${song.pic_id}&source=${song.source || "netease"}&size=300&s=${signature}`;
+    },
+
+    /**
+     * 以下为「数据源分发器」：根据当前选择的数据源，决定走 GD 音乐台还是自部署 NCM API。
+     * 调用方（audio/lyrics/app）只依赖这些分发器，不再关心底层实现。
+     */
+    fetchSongUrl: async (song, quality = "320", options = {}, debugLogger = null) => {
+        const source = String(song.source || "netease").toLowerCase();
+
+        if (isNcmActive() && source === "netease") {
+            return ncmSongUrl(song, quality, debugLogger);
+        }
+
+        // 非网易云歌曲（或选择 GD 音乐台时）回退到原有代理链路
+        let url = API.getSongUrl(song, quality);
+        if (options && options.nocache) {
+            url += "&nocache=true";
+        }
+        return API.fetchJson(url, debugLogger);
+    },
+
+    fetchLyricData: async (song, debugLogger = null) => {
+        const source = String(song.source || "netease").toLowerCase();
+
+        if (isNcmActive() && source === "netease") {
+            return ncmLyric(song, debugLogger);
+        }
+
+        return API.fetchJson(API.getLyric(song), debugLogger);
+    },
+
+    fetchPicData: async (song, debugLogger = null) => {
+        const source = String(song.source || "netease").toLowerCase();
+
+        if (isNcmActive() && source === "netease") {
+            return ncmPic(song, debugLogger);
+        }
+
+        // GD 音乐台的封面解析依赖 pic_id，缺失时直接放弃，避免拼出 id=undefined
+        if (!song.pic_id) return null;
+
+        return API.fetchJson(API.getPicUrl(song), debugLogger);
     }
 };
 

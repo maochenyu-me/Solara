@@ -203,10 +203,8 @@ export async function updateCurrentSongInfo(song, options = {}) {
                 scheduleDeferredPaletteUpdate(finalPicUrl, state, dom, {}, debugLog);
             }
             // 4. 确实没有直链时，才向后端请求 types=pic 解析
-            else if (song.pic_id) {
-                const picUrl = API.getPicUrl(song);
-                debugLog(`[封面请求] 解析接口: ${picUrl}`);
-                const picData = await API.fetchJson(picUrl, debugLog);
+            else if (song.pic_id || song.id) {
+                const picData = await API.fetchPicData(song, debugLog);
                 if (picData && picData.url) {
                     const finalPicUrl = preferHttpsUrl(picData.url);
                     coverPicMemoryCache.set(cacheKey, finalPicUrl);
@@ -791,6 +789,9 @@ function setupEventHandlers() {
     if (dom.searchBtn) {
         dom.searchBtn.addEventListener("click", (e) => {
             e.preventDefault();
+            // 阻止冒泡：performSearch 会立刻替换按钮内容，导致 document 上的
+            // “点击空白处收起搜索”判定拿不到 .search-controls-wrapper 祖先而误收起结果
+            e.stopPropagation();
             performSearch(false, state, dom, getSearchCallbacks(), debugLog);
         });
     }
@@ -1598,7 +1599,16 @@ export async function bootstrap() {
 
     setupEventHandlers();
     initTheme(dom, state);
-    initSettings(dom, state, { debugLog, manualSync: handleManualCloudSync });
+    initSettings(dom, state, {
+        debugLog,
+        manualSync: handleManualCloudSync,
+        onProviderChange: (provider) => {
+            // 数据源切换后，音源下拉的可用性与文案需要立即刷新
+            state.musicApiProvider = provider;
+            updateSourceLabel(state, dom);
+            buildSourceMenu(state, dom);
+        }
+    });
     initSpotlightEffect();
     initMediaSession(state, dom, {
         playNext: () => playNext(state, dom, getAudioCallbacks()),

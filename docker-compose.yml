@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   solara:
-    image: ghcr.io/akudamatata/solara:latest
+    image: ghcr.io/maochenyu-me/solara:latest
     container_name: solara
     restart: always
     init: true # 解决容器停止时 Node/Wrangler 进程无法优雅响应 SIGTERM 导致卡顿的问题

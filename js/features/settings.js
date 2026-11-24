@@ -4,6 +4,25 @@
 
 import { EXPLORE_RADAR_GENRES, DEFAULT_RADAR_GENRES } from "../constants.js";
 import { safeGetLocalStorage, safeSetLocalStorage, persistStorageItems } from "../core/storage.js";
+import {
+    PROVIDER_NCM,
+    PROVIDER_METING,
+    getProvider,
+    setProvider,
+    getNcmBaseUrl,
+    setNcmBaseUrl,
+    getNcmCookie,
+    setNcmCookie,
+    clearNcmCookie,
+    DEFAULT_NCM_BASE_URL,
+} from "../core/provider.js";
+import {
+    ncmQrKey,
+    ncmQrCreate,
+    ncmQrCheck,
+    ncmLoginStatus,
+    ncmLogout,
+} from "../core/ncm-api.js";
 import { toggleDebugMode } from "../visual/spotlight.js";
 import { updateAllTabsIndicators } from "./playlist.js";
 
@@ -74,6 +93,10 @@ export function showNotification(message, type = "success", dom = null) {
 
 export function openSettingsModal(dom, state = null) {
     if (dom && dom.settingsModal) {
+        applyProviderToUI(dom);
+        if (getProvider() === PROVIDER_NCM) {
+            refreshNcmLoginStatus(dom);
+        }
         // 同步调试模式按钮外观
         if (state) {
             const toggleDebugBtn = document.getElementById("toggleDebugBtn");
@@ -256,6 +279,223 @@ export function initLayoutMode(dom) {
     }
 }
 
+/* ------------------------------------------------------------------ *
+ * 音乐数据源（GD 音乐台 / 自部署 NCM API）
+ * ------------------------------------------------------------------ */
+
+let ncmQrTimer = null;
+let ncmQrKeyValue = null;
+
+function stopNcmQrPolling() {
+    if (ncmQrTimer) {
+        clearInterval(ncmQrTimer);
+        ncmQrTimer = null;
+    }
+    ncmQrKeyValue = null;
+}
+
+export function applyProviderToUI(dom) {
+    if (!dom) return;
+    const provider = getProvider();
+
+    if (Array.isArray(dom.apiSourceOptions)) {
+        dom.apiSourceOptions.forEach(btn => {
+            const isActive = btn.dataset.provider === provider;
+            btn.classList.toggle("is-active", isActive);
+            btn.setAttribute("aria-checked", isActive ? "true" : "false");
+        });
+    }
+
+    if (dom.ncmProviderPanel) {
+        dom.ncmProviderPanel.hidden = provider !== PROVIDER_NCM;
+    }
+
+    if (dom.ncmBaseUrlInput && !dom.ncmBaseUrlInput.matches(":focus")) {
+        dom.ncmBaseUrlInput.value = getNcmBaseUrl();
+    }
+
+    if (dom.ncmCookieInput && !dom.ncmCookieInput.matches(":focus")) {
+        dom.ncmCookieInput.value = getNcmCookie();
+    }
+}
+
+function setNcmLoginStatus(dom, text) {
+    if (dom && dom.ncmLoginStatus) {
+        dom.ncmLoginStatus.textContent = text;
+    }
+}
+
+async function refreshNcmLoginStatus(dom) {
+    if (!dom || !dom.ncmLoginStatus) return;
+    const cookie = getNcmCookie();
+
+    if (!cookie) {
+        setNcmLoginStatus(dom, "未登录 · 仅可播放免费曲目");
+        if (dom.ncmLogoutBtn) dom.ncmLogoutBtn.hidden = true;
+        return;
+    }
+
+    setNcmLoginStatus(dom, "正在检查登录状态...");
+    try {
+        const profile = await ncmLoginStatus();
+        if (profile && profile.nickname) {
+            setNcmLoginStatus(dom, `已登录：${profile.nickname}${profile.vipType ? "（会员）" : ""}`);
+            if (dom.ncmLogoutBtn) dom.ncmLogoutBtn.hidden = false;
+        } else {
+            setNcmLoginStatus(dom, "未登录 · 仅可播放免费曲目");
+            if (dom.ncmLogoutBtn) dom.ncmLogoutBtn.hidden = true;
+        }
+    } catch (error) {
+        setNcmLoginStatus(dom, `无法连接 API · 请检查地址与 CORS（${error.message}）`);
+        if (dom.ncmLogoutBtn) dom.ncmLogoutBtn.hidden = true;
+    }
+}
+
+async function startNcmQrLogin(dom) {
+    if (!dom || !dom.ncmQrBox) return;
+
+    try {
+        if (dom.ncmQrLoginBtn) dom.ncmQrLoginBtn.disabled = true;
+        setNcmLoginStatus(dom, "正在生成登录二维码...");
+
+        const key = await ncmQrKey();
+        ncmQrKeyValue = key;
+        const qrimg = await ncmQrCreate(key);
+
+        if (dom.ncmQrCodeImg) dom.ncmQrCodeImg.src = qrimg;
+        if (dom.ncmQrHint) dom.ncmQrHint.textContent = "请用网易云音乐 App 扫码并在手机上确认";
+        dom.ncmQrBox.hidden = false;
+        if (dom.ncmQrLoginText) dom.ncmQrLoginText.textContent = "重新获取二维码";
+
+        stopNcmQrPolling();
+        ncmQrKeyValue = key;
+        ncmQrTimer = setInterval(async () => {
+            try {
+                const result = await ncmQrCheck(ncmQrKeyValue);
+                if (result.code === 800) {
+                    stopNcmQrPolling();
+                    if (dom.ncmQrHint) dom.ncmQrHint.textContent = "二维码已过期，请重新获取";
+                } else if (result.code === 802) {
+                    if (dom.ncmQrHint) dom.ncmQrHint.textContent = "已扫码，请在手机上确认登录";
+                } else if (result.code === 803) {
+                    stopNcmQrPolling();
+                    setNcmCookie(result.cookie);
+                    if (dom.ncmCookieInput) dom.ncmCookieInput.value = result.cookie;
+                    if (dom.ncmQrBox) dom.ncmQrBox.hidden = true;
+                    showNotification("网易云登录成功", "success", dom);
+                    refreshNcmLoginStatus(dom);
+                }
+            } catch (error) {
+                stopNcmQrPolling();
+                if (dom.ncmQrHint) dom.ncmQrHint.textContent = `轮询失败：${error.message}`;
+            }
+        }, 2000);
+    } catch (error) {
+        stopNcmQrPolling();
+        setNcmLoginStatus(dom, `生成二维码失败：${error.message}`);
+        showNotification(`生成二维码失败：${error.message}`, "error", dom);
+    } finally {
+        if (dom.ncmQrLoginBtn) dom.ncmQrLoginBtn.disabled = false;
+    }
+}
+
+/**
+ * 绑定设置面板里的数据源交互
+ */
+export function initProviderSettings(dom, state, callbacks = {}) {
+    if (!dom) return;
+
+    applyProviderToUI(dom);
+
+    const notifyProviderChanged = () => {
+        if (typeof callbacks.onProviderChange === "function") {
+            callbacks.onProviderChange(getProvider());
+        }
+    };
+
+    if (Array.isArray(dom.apiSourceOptions)) {
+        dom.apiSourceOptions.forEach(btn => {
+            btn.addEventListener("click", () => {
+                const next = btn.dataset.provider === PROVIDER_NCM ? PROVIDER_NCM : PROVIDER_METING;
+                const current = getProvider();
+                setProvider(next);
+                applyProviderToUI(dom);
+
+                if (next === PROVIDER_NCM) {
+                    refreshNcmLoginStatus(dom);
+                } else {
+                    stopNcmQrPolling();
+                    if (dom.ncmQrBox) dom.ncmQrBox.hidden = true;
+                }
+
+                if (next !== current) {
+                    showNotification(
+                        next === PROVIDER_NCM ? "已切换到自部署网易云 API" : "已切换到 GD 音乐台",
+                        "info",
+                        dom
+                    );
+                    notifyProviderChanged();
+                }
+            });
+        });
+    }
+
+    if (dom.ncmBaseUrlInput) {
+        const commitBaseUrl = () => {
+            const normalized = setNcmBaseUrl(dom.ncmBaseUrlInput.value);
+            dom.ncmBaseUrlInput.value = normalized;
+            if (state) state.ncmBaseUrl = normalized;
+            if (typeof persistStorageItems === "function") {
+                persistStorageItems({ ncmBaseUrl: normalized });
+            }
+            refreshNcmLoginStatus(dom);
+        };
+        dom.ncmBaseUrlInput.addEventListener("blur", commitBaseUrl);
+        dom.ncmBaseUrlInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                commitBaseUrl();
+            }
+        });
+    }
+
+    if (dom.ncmQrLoginBtn) {
+        dom.ncmQrLoginBtn.addEventListener("click", () => startNcmQrLogin(dom));
+    }
+
+    if (dom.ncmLogoutBtn) {
+        dom.ncmLogoutBtn.addEventListener("click", async () => {
+            stopNcmQrPolling();
+            await ncmLogout();
+            clearNcmCookie();
+            if (dom.ncmCookieInput) dom.ncmCookieInput.value = "";
+            if (dom.ncmQrBox) dom.ncmQrBox.hidden = true;
+            setNcmLoginStatus(dom, "未登录 · 仅可播放免费曲目");
+            dom.ncmLogoutBtn.hidden = true;
+            showNotification("已退出网易云登录", "info", dom);
+        });
+    }
+
+    if (dom.ncmCookieInput) {
+        const commitCookie = () => {
+            const saved = setNcmCookie(dom.ncmCookieInput.value);
+            dom.ncmCookieInput.value = saved;
+            refreshNcmLoginStatus(dom);
+        };
+        dom.ncmCookieInput.addEventListener("blur", commitCookie);
+        dom.ncmCookieInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                dom.ncmCookieInput.blur();
+            }
+        });
+    }
+
+    if (getProvider() === PROVIDER_NCM) {
+        refreshNcmLoginStatus(dom);
+    }
+}
+
 export function initSettings(dom, state, callbacks = {}) {
     renderGenreList(dom, state);
 
@@ -328,4 +568,5 @@ export function initSettings(dom, state, callbacks = {}) {
 
     loadSettings(dom, state);
     initLayoutMode(dom);
+    initProviderSettings(dom, state, callbacks);
 }

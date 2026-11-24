@@ -18,6 +18,7 @@ import {
     cloneSearchResults,
     sanitizeStoredSearchState
 } from "./core/storage.js";
+import { getProvider, getNcmBaseUrl, getNcmCookie } from "./core/provider.js";
 
 // 1. 初始化读取本地缓存状态
 const savedPlaylistSongs = (() => {
@@ -131,6 +132,9 @@ export const state = {
     searchPage: savedLastSearchState?.page || 1,
     searchKeyword: savedLastSearchState?.keyword || "",
     searchSource: savedLastSearchState ? savedLastSearchState.source : savedSearchSource,
+    musicApiProvider: getProvider(),
+    ncmBaseUrl: getNcmBaseUrl(),
+    ncmCookie: getNcmCookie(),
     hasMoreResults: typeof savedLastSearchState?.hasMore === "boolean" ? savedLastSearchState.hasMore : true,
     currentSong: savedCurrentSong,
     currentArtworkUrl: null,
